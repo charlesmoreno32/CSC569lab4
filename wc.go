@@ -6,10 +6,12 @@ package main
 // go build -buildmode=plugin wc.go
 //
 
-import "../mr"
-import "unicode"
-import "strings"
-import "strconv"
+import (
+	"CSC569lab4/shared"
+	"strconv"
+	"strings"
+	"unicode"
+)
 
 //
 // The map function is called once for each file of input. The first
@@ -18,16 +20,16 @@ import "strconv"
 // and look only at the contents argument. The return value is a slice
 // of key/value pairs.
 //
-func Map(filename string, contents string) []mr.KeyValue {
+func Map(filename string, contents string) []shared.KeyValue {
 	// function to detect word separators.
 	ff := func(r rune) bool { return !unicode.IsLetter(r) }
 
 	// split contents into an array of words.
 	words := strings.FieldsFunc(contents, ff)
 
-	kva := []mr.KeyValue{}
+	kva := []shared.KeyValue{}
 	for _, w := range words {
-		kv := mr.KeyValue{w, "1"}
+		kv := shared.KeyValue{w, "1"}
 		kva = append(kva, kv)
 	}
 	return kva

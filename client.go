@@ -1,7 +1,7 @@
 package main
 
 import (
-	"CSC569lab3/shared"
+	"CSC569lab4/shared"
 	"fmt"
 	"math/rand"
 	"net/rpc"

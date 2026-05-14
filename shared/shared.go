@@ -1,12 +1,12 @@
 package shared
 
 import (
-//    "fmt"
-    "math/rand"
-    "time"
-    "errors"
-    "fmt"
-    "sync"
+	//    "fmt"
+	"errors"
+	"fmt"
+	"math/rand"
+	"sync"
+	"time"
 )
 
 const (
@@ -16,6 +16,11 @@ const (
     ROLE_CANDIDATE =  1
     ROLE_LEADER    =  2
 )
+
+type KeyValue struct {
+	Key   string
+	Value string
+}
 
 // Node struct represents a computing node.
 type Node struct {

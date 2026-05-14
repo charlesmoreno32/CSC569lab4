@@ -6,16 +6,18 @@ package main
 // go run mrsequential.go wc.so pg*.txt
 //
 
-import "fmt"
-import "../mr"
-import "plugin"
-import "os"
-import "log"
-import "io/ioutil"
-import "sort"
+import (
+	"CSC569lab4/shared"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"os"
+	"plugin"
+	"sort"
+)
 
 // for sorting by key.
-type ByKey []mr.KeyValue
+type ByKey []shared.KeyValue
 
 // for sorting by key.
 func (a ByKey) Len() int           { return len(a) }
@@ -35,7 +37,7 @@ func main() {
 	// pass it to Map,
 	// accumulate the intermediate Map output.
 	//
-	intermediate := []mr.KeyValue{}
+	intermediate := []shared.KeyValue{}
 	for _, filename := range os.Args[2:] {
 		file, err := os.Open(filename)
 		if err != nil {
@@ -90,7 +92,7 @@ func main() {
 // load the application Map and Reduce functions
 // from a plugin file, e.g. ../mrapps/wc.so
 //
-func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(string, []string) string) {
+func loadPlugin(filename string) (func(string, string) []shared.KeyValue, func(string, []string) string) {
 	p, err := plugin.Open(filename)
 	if err != nil {
 		log.Fatalf("cannot load plugin %v", filename)
@@ -99,7 +101,7 @@ func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(strin
 	if err != nil {
 		log.Fatalf("cannot find Map in %v", filename)
 	}
-	mapf := xmapf.(func(string, string) []mr.KeyValue)
+	mapf := xmapf.(func(string, string) []shared.KeyValue)
 	xreducef, err := p.Lookup("Reduce")
 	if err != nil {
 		log.Fatalf("cannot find Reduce in %v", filename)

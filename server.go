@@ -1,10 +1,11 @@
 package main
 
 import (
-	"CSC569lab3/shared"
 	"io"
 	"net/http"
 	"net/rpc"
+
+	"CSC569lab4/shared"
 )
 
 func main() {
