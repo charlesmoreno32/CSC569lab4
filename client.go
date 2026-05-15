@@ -2,7 +2,9 @@ package main
 
 import (
 	"CSC569lab4/shared"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/rpc"
 	"os"
@@ -227,6 +229,57 @@ func enterElection(server *rpc.Client) {
     }
 }
 
+func readShard(task shared.Task) (string, error) {
+    file, err := os.Open(task.Filename)
+    if err != nil {
+        return "", err
+    }
+    defer file.Close()
+
+    size := task.ShardEnd - task.ShardStart
+    buf := make([]byte, size)
+
+    _, err = file.ReadAt(buf, int64(task.ShardStart))
+    if err != nil && err != io.EOF {
+        return "", err
+    }
+
+    return string(buf), nil
+}
+
+func runMapTask(task shared.Task) bool {
+    mapf, reducef := shared.LoadPlugin("wc.so")
+
+    contents, err := readShard(task)
+    if err != nil {
+        fmt.Println("read shard error:", err)
+        return false
+    }
+
+    kva := mapf(task.Filename, contents)
+
+    outputName := fmt.Sprintf("mr-map-%d-%d.json", task.WorkerID, task.ID)
+
+    ofile, err := os.Create(outputName)
+    if err != nil {
+        fmt.Println("cannot create map output:", err)
+        return false
+    }
+    defer ofile.Close()
+
+    enc := json.NewEncoder(ofile)
+
+    for _, kv := range kva {
+        if err := enc.Encode(&kv); err != nil {
+            fmt.Println("encode error:", err)
+            return false
+        }
+    }
+
+    fmt.Printf("Node %d wrote %s\n", self_node.ID, outputName)
+    return true
+}
+
 func workerCheckTask(server *rpc.Client) {
     if self_node.Role == shared.ROLE_LEADER {
         return
@@ -246,15 +299,26 @@ func workerCheckTask(server *rpc.Client) {
     fmt.Printf("Node %d got task %d\n", self_node.ID, task.ID)
 
     // TODO: actually run map/reduce here
+    success := false
+    if task.TypeOfTask == shared.TASK_MAP {
+        success = runMapTask(task)
+    } else if task.TypeOfTask == shared.TASK_REDUCE {
+        // success = runReduceTask(task)
+    }
 
     var ok bool
-    server.Call("TaskAssignments.CompleteTask", self_node.ID, &ok)
+    if success {
+        server.Call("TaskAssignments.CompleteTask", self_node.ID, &ok)
+    } else {
+        server.Call("TaskAssignments.FailTask", self_node.ID, &ok)
+    }
 }
 
 func isBoundary(b byte) bool {
     return b == ' ' || b == '\n' || b == '\t' || b == '\r'
 }
 
+// Divides the file into shards and creates tasks for each shard.
 func makeMapTasks(files []string, numWorkers int) []shared.Task {
     tasks := []shared.Task{}
     taskID := 1
@@ -317,6 +381,7 @@ func makeMapTasks(files []string, numWorkers int) []shared.Task {
     return tasks
 }
 
+// Finds task that needs assinging
 func findIdleTask() (int, bool) {
     for i := range mapTasks {
         if mapTasks[i].Status == shared.TASK_IDLE {
@@ -326,6 +391,7 @@ func findIdleTask() (int, bool) {
     return -1, false
 }
 
+//Updates local copy of task assignments to workers from server
 func syncCompletedTasks(assigned map[int]shared.Task) {
     for _, assignedTask := range assigned {
         if assignedTask.Status != shared.TASK_COMPLETE {
