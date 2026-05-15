@@ -21,6 +21,8 @@ const (
 var self_node shared.Node
 var mu_lmemb sync.Mutex
 
+var mapTasks []shared.Task
+
 // Send the current membership table to a neighboring node with the provided ID
 func sendMessage(server *rpc.Client, id int, membership shared.Membership) {
     //TODO
@@ -157,7 +159,7 @@ func enterElection(server *rpc.Client) {
     self_node.LeaderID = 0 //Mark as leaderless
     self_node.Term++  //increment term
     success := false
-    (*server).Call("Proposal.Clear", self_node.Term, &success)
+    (*server).Call("Election.Clear", self_node.Term, &success)
 
     if success { fmt.Printf("Votes cleared from Term %d\n", self_node.Term - 1) }
 
@@ -169,7 +171,7 @@ func enterElection(server *rpc.Client) {
     time.Sleep(time.Duration(delay) * time.Millisecond) //Sleep random amount of time from 150 to 300
 
     proposal := shared.Node{}
-    err := (*server).Call("Proposal.Dequeue", self_node, &proposal) //Get first proposal from term
+    err := (*server).Call("Election.Dequeue", self_node, &proposal) //Get first proposal from term
 
     if err != nil {
         fmt.Printf("Error - updateLeader: %s\n", err)
@@ -177,15 +179,15 @@ func enterElection(server *rpc.Client) {
 
     if (proposal == shared.Node{}) { //No proposals yet. Proposes self as candidate
         fmt.Println("No Proposals, proposing self as leader")
-        (*server).Call("Proposal.Enqueue", self_node, &self_node)
+        (*server).Call("Election.Enqueue", self_node, &self_node)
         self_node.Role = shared.ROLE_CANDIDATE
-        (*server).Call("Proposal.Vote", self_node.ID, &success)
+        (*server).Call("Election.Vote", self_node.ID, &success)
         self_node.Voted = true
 
         //Wait a total of 3400 ms from the beginning of the function (delay + (300 - delay) + 3100)
         time.Sleep(time.Duration(max_delay - delay + 3100) * time.Millisecond)
         count := 0
-        (*server).Call("Proposal.CountVotes", self_node.ID, &count)
+        (*server).Call("Election.CountVotes", self_node.ID, &count)
 
         if count > (MAX_NODES / 2) { //Strict majority
             self_node.Role = shared.ROLE_LEADER
@@ -210,7 +212,7 @@ func enterElection(server *rpc.Client) {
 
         }
     } else {
-        (*server).Call("Proposal.Vote", proposal.ID, &success)
+        (*server).Call("Election.Vote", proposal.ID, &success)
         self_node.Voted = true //Has proposal for term, mark as voted
         fmt.Printf("Voting for proposal by node %d\n", proposal.ID)
         //Waits for a total of 1400 ms after the beginning of the function
@@ -222,6 +224,182 @@ func enterElection(server *rpc.Client) {
 
         fmt.Printf("Node %d succsefully elected\n", self_node.LeaderID)
 
+    }
+}
+
+func workerCheckTask(server *rpc.Client) {
+    if self_node.Role == shared.ROLE_LEADER {
+        return
+    }
+
+    var task shared.Task
+    err := server.Call("TaskAssignments.GetTask", self_node.ID, &task)
+    if err != nil {
+        fmt.Println("GetTask error:", err)
+        return
+    }
+
+    if task.TypeOfTask == shared.TASK_WAIT {
+        return
+    }
+
+    fmt.Printf("Node %d got task %d\n", self_node.ID, task.ID)
+
+    // TODO: actually run map/reduce here
+
+    var ok bool
+    server.Call("TaskAssignments.CompleteTask", self_node.ID, &ok)
+}
+
+func isBoundary(b byte) bool {
+    return b == ' ' || b == '\n' || b == '\t' || b == '\r'
+}
+
+func makeMapTasks(files []string, numWorkers int) []shared.Task {
+    tasks := []shared.Task{}
+    taskID := 1
+
+    if numWorkers <= 0 {
+        numWorkers = 1
+    }
+
+    for _, filename := range files {
+        content, err := os.ReadFile(filename)
+        if err != nil {
+            fmt.Println("Cannot read file:", filename, err)
+            continue
+        }
+
+        fileSize := len(content)
+        if fileSize == 0 {
+            continue
+        }
+
+        baseShardSize := (fileSize + numWorkers - 1) / numWorkers
+
+        start := 0
+        shardNo := 0
+
+        for start < fileSize {
+            end := start + baseShardSize
+            if end > fileSize {
+                end = fileSize
+            }
+
+            for end < fileSize && !isBoundary(content[end]) {
+                end++
+            }
+
+            task := shared.Task{
+                ID:         taskID,
+                ShardNo:    shardNo,
+                ShardStart: start,
+                ShardEnd:   end,
+                TypeOfTask: shared.TASK_MAP,
+                Filename:   filename,
+                Term:       self_node.Term,
+                Status:     shared.TASK_IDLE,
+                LeaderID:   self_node.ID,
+            }
+
+            tasks = append(tasks, task)
+
+            taskID++
+            shardNo++
+
+            start = end
+            for start < fileSize && isBoundary(content[start]) {
+                start++
+            }
+        }
+    }
+
+    return tasks
+}
+
+func findIdleTask() (int, bool) {
+    for i := range mapTasks {
+        if mapTasks[i].Status == shared.TASK_IDLE {
+            return i, true
+        }
+    }
+    return -1, false
+}
+
+func syncCompletedTasks(assigned map[int]shared.Task) {
+    for _, assignedTask := range assigned {
+        if assignedTask.Status != shared.TASK_COMPLETE {
+            continue
+        }
+
+        for i := range mapTasks {
+            if mapTasks[i].ID == assignedTask.ID {
+                mapTasks[i].Status = shared.TASK_COMPLETE
+                break
+            }
+        }
+    }
+}
+
+func leaderAssignTasks(server *rpc.Client) {
+    if self_node.Role != shared.ROLE_LEADER {
+        return
+    }
+
+    if mapTasks == nil {
+        files := []string{"pg-being_ernest.txt"}
+        numWorkers := MAX_NODES - 1
+
+        mapTasks = makeMapTasks(files, numWorkers)
+
+        fmt.Printf("Leader created %d map tasks\n", len(mapTasks))
+    }
+
+    var currWorkerTasks map[int]shared.Task
+    err := server.Call("TaskAssignments.GetAllTasks", 0, &currWorkerTasks)
+    if err != nil {
+        fmt.Println("GetAllTasks error:", err)
+        return
+    }
+
+    syncCompletedTasks(currWorkerTasks)
+
+    for workerID := 1; workerID <= MAX_NODES; workerID++ {
+        if workerID == self_node.ID {
+            continue
+        }
+
+        currentTask, exists := currWorkerTasks[workerID]
+        if exists && currentTask.Status == shared.TASK_INPROGRESS {
+            continue
+        }
+
+        taskIndex, found := findIdleTask()
+        if !found {
+            return
+        }
+
+        mapTasks[taskIndex].WorkerID = workerID
+        mapTasks[taskIndex].Status = shared.TASK_INPROGRESS
+        mapTasks[taskIndex].LeaderID = self_node.ID
+        mapTasks[taskIndex].Term = self_node.Term
+
+        var ok bool
+        err := server.Call("TaskAssignments.AssignTask", mapTasks[taskIndex], &ok)
+        if err != nil {
+            fmt.Println("AssignTask error:", err)
+            mapTasks[taskIndex].Status = shared.TASK_IDLE
+            mapTasks[taskIndex].WorkerID = 0
+            continue
+        }
+
+        fmt.Printf(
+            "Leader assigned task %d [%d:%d] to node %d\n",
+            mapTasks[taskIndex].ID,
+            mapTasks[taskIndex].ShardStart,
+            mapTasks[taskIndex].ShardEnd,
+            workerID,
+        )
     }
 }
 
@@ -246,12 +424,20 @@ func runAfterY(server *rpc.Client, neighbors [2]int, membership **shared.Members
                 enterElection(server)
             }
 
+            workerCheckTask(server)
 
             mu_lmemb.Lock()
             (*membership) = readMessages(server, neighbors[0], **membership)
             (*membership) = readMessages(server, neighbors[1], **membership)
             mu_lmemb.Unlock()
         } else if self_node.Role == shared.ROLE_LEADER{
+            // for _, node := range (*membership).Members {
+            //     if(node.Alive && node.ID != self_node.ID) {
+            //         mu_lmemb.Lock()
+            //         (*membership) = readMessages(server, node.ID, **membership)
+            //         mu_lmemb.Unlock()
+            //     }
+            // }
             for i := 1; i <= MAX_NODES; i++ {
                 if i != self_node.ID {
                     mu_lmemb.Lock()
@@ -259,6 +445,7 @@ func runAfterY(server *rpc.Client, neighbors [2]int, membership **shared.Members
                     mu_lmemb.Unlock()
                 }
             }
+            leaderAssignTasks(server)
         }
 
         mu_lmemb.Lock()

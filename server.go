@@ -13,13 +13,14 @@ func main() {
         leader := shared.Node{}
         nodes := shared.NewMembership()
         requests := shared.NewRequests()
-		proposals := shared.NewProposal()
+		election := shared.NewElection()
+        taskAssignments := shared.NewTaskAssignments()
         // register nodes with `rpc.DefaultServer`
         rpc.Register(&leader)
         rpc.Register(nodes)
         rpc.Register(requests)
-		rpc.Register(proposals)
-
+		rpc.Register(election)
+        rpc.Register(taskAssignments)
         // register an HTTP handler for RPC communication
         rpc.HandleHTTP()
 

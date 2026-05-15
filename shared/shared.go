@@ -15,6 +15,14 @@ const (
     ROLE_FOLLOWER  =  0
     ROLE_CANDIDATE =  1
     ROLE_LEADER    =  2
+
+    TASK_MAP    = "map"
+    TASK_REDUCE = "reduce"
+    TASK_WAIT   = "wait"
+
+    TASK_IDLE       = "idle"
+    TASK_INPROGRESS = "inprogress"
+    TASK_COMPLETE   = "complete"
 )
 
 type KeyValue struct {
@@ -80,17 +88,17 @@ func RandInt() int {
 
 /*---------------*/
 
-// Proposal struct represents a candidate proposal for RAFT election
-type Proposal struct {
-    Proposals map[int]Node
-    Votes     map[int]int
+// Election struct represents a candidate Election for RAFT election
+type Election struct {
+    Proposals map[int]Node // What node each node is voting for as leader
+    Votes     map[int]int // Number of votes each node has received
     Term      int
     mu        sync.Mutex
 }
 
-// Returns a new instance of a Proposal (pointer).
-func NewProposal() *Proposal {
-    return &Proposal{
+// Returns a new instance of a Election (pointer).
+func NewElection() *Election {
+    return &Election{
         Proposals: make(map[int]Node),
         Votes: make(map[int]int),
         Term: 1,
@@ -98,7 +106,7 @@ func NewProposal() *Proposal {
 }
 
 // Adds a proposal to the proposals list.
-func (p *Proposal) Enqueue(payload Node, reply *Node) error { //Proposals are the mailboxes
+func (p *Election) Enqueue(payload Node, reply *Node) error { //Proposals are the mailboxes
     // Go through all mailboxes and see if they have a proposal with a term less than prposal
     // If term is higher, don't update mailbox w proposal
     // If term is less or equal, add proposal to mailbox
@@ -115,13 +123,13 @@ func (p *Proposal) Enqueue(payload Node, reply *Node) error { //Proposals are th
 }
 
 // get the node proposal at the payload node's id and check if the term is equal to current term.
-func (p *Proposal) Dequeue(payload Node, reply *Node) error { //Proposals are the mailboxes
+func (p *Election) Dequeue(payload Node, reply *Node) error { //Proposals are the mailboxes
     //TODO
     p.mu.Lock()
     if (p.Proposals != nil) {
-        currentProposal := p.Proposals[payload.ID]
-        if(currentProposal.Term == payload.Term) {
-            *reply = currentProposal
+        currentElection := p.Proposals[payload.ID]
+        if(currentElection.Term == payload.Term) {
+            *reply = currentElection
             p.mu.Unlock()
             return nil
         } else {
@@ -135,7 +143,7 @@ func (p *Proposal) Dequeue(payload Node, reply *Node) error { //Proposals are th
     return errors.New("Proposals do not exist")
 }
 
-func (p *Proposal) Vote(ID int, reply *bool) error {
+func (p *Election) Vote(ID int, reply *bool) error {
     p.mu.Lock()
     p.Votes[ID]++
     p.mu.Unlock()
@@ -143,7 +151,7 @@ func (p *Proposal) Vote(ID int, reply *bool) error {
     return nil
 }
 
-func (p *Proposal) Clear(term int, response *bool) error {
+func (p *Election) Clear(term int, response *bool) error {
     if (term > p.Term) { //Update term
         for vote := range p.Votes {
             delete(p.Votes, vote)
@@ -157,7 +165,7 @@ func (p *Proposal) Clear(term int, response *bool) error {
 
 }
 
-func (p *Proposal) CountVotes(ID int, reply *int) error {
+func (p *Election) CountVotes(ID int, reply *int) error {
     *reply = p.Votes[ID]
     return nil
 }
@@ -305,4 +313,109 @@ func CombineTables(primary *Membership, other *Membership) *Membership {
         }
     }
     return primary
+}
+
+/*---------------*/
+// MapReduce and Log Replication implementation
+
+type LogEntry struct {
+    Index int
+    Term  int
+    Task  Task
+}
+
+type Task struct {
+    ID int
+    ShardNo int
+    ShardStart int
+    ShardEnd int
+    TypeOfTask string
+    Filename string
+    Term int
+    Status string
+    WorkerID int
+    LeaderID int
+}
+
+type TaskAssignments struct {
+    Tasks   map[int]Task // Map of workerID to Task, what task each worker node is assigned
+    mu      sync.Mutex
+}
+
+func NewTaskAssignments() *TaskAssignments {
+    return &TaskAssignments{
+        Tasks: make(map[int]Task),
+    }
+}
+
+func (m *TaskAssignments) AssignTask(task Task, reply *bool) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    m.Tasks[task.WorkerID] = task
+
+    *reply = true
+    return nil
+}
+
+func (m *TaskAssignments) GetTask(workerID int, reply *Task) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    task, exists := m.Tasks[workerID]
+    if !exists {
+        *reply = Task{TypeOfTask: TASK_WAIT}
+        return nil
+    }
+
+    *reply = task
+    return nil
+}
+
+func (m *TaskAssignments) CompleteTask(workerID int, reply *bool) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    task, exists := m.Tasks[workerID]
+    if !exists {
+        *reply = false
+        return nil
+    }
+
+    task.Status = TASK_COMPLETE
+    m.Tasks[workerID] = task
+
+    *reply = true
+    return nil
+}
+
+func (m *TaskAssignments) FailTask(workerID int, reply *bool) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    task, exists := m.Tasks[workerID]
+    if !exists {
+        *reply = false
+        return nil
+    }
+
+    task.Status = TASK_IDLE
+    task.WorkerID = 0
+    m.Tasks[workerID] = task
+
+    *reply = true
+    return nil
+}
+
+func (m *TaskAssignments) GetAllTasks(dummy int, reply *map[int]Task) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    copyTasks := make(map[int]Task)
+    for workerID, task := range m.Tasks {
+        copyTasks[workerID] = task
+    }
+
+    *reply = copyTasks
+    return nil
 }
