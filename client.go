@@ -23,8 +23,6 @@ const (
 var self_node shared.Node
 var mu_lmemb sync.Mutex
 
-var mapTasks []shared.Task
-
 // Send the current membership table to a neighboring node with the provided ID
 func sendMessage(server *rpc.Client, id int, membership shared.Membership) {
     //TODO
@@ -381,30 +379,32 @@ func makeMapTasks(files []string, numWorkers int) []shared.Task {
     return tasks
 }
 
-// Finds task that needs assinging
-func findIdleTask() (int, bool) {
-    for i := range mapTasks {
-        if mapTasks[i].Status == shared.TASK_IDLE {
-            return i, true
-        }
-    }
-    return -1, false
-}
+func startMapReduceIfNeeded(server *rpc.Client) {
+    var isEmpty bool
 
-//Updates local copy of task assignments to workers from server
-func syncCompletedTasks(assigned map[int]shared.Task) {
-    for _, assignedTask := range assigned {
-        if assignedTask.Status != shared.TASK_COMPLETE {
-            continue
-        }
-
-        for i := range mapTasks {
-            if mapTasks[i].ID == assignedTask.ID {
-                mapTasks[i].Status = shared.TASK_COMPLETE
-                break
-            }
-        }
+    err := server.Call("TaskAssignments.IsEmpty", 0, &isEmpty)
+    if err != nil {
+        fmt.Println("IsEmpty error:", err)
+        return
     }
+
+    if !isEmpty {
+        return
+    }
+
+    files := []string{"pg-being_ernest.txt"}
+    numWorkers := MAX_NODES - 1
+
+    tasks := makeMapTasks(files, numWorkers)
+
+    var ok bool
+    err = server.Call("TaskAssignments.AddTasks", tasks, &ok)
+    if err != nil {
+        fmt.Println("AddTasks error:", err)
+        return
+    }
+
+    fmt.Printf("Leader registered %d map tasks\n", len(tasks))
 }
 
 func leaderAssignTasks(server *rpc.Client) {
@@ -412,58 +412,82 @@ func leaderAssignTasks(server *rpc.Client) {
         return
     }
 
-    if mapTasks == nil {
-        files := []string{"pg-being_ernest.txt"}
-        numWorkers := MAX_NODES - 1
+    startMapReduceIfNeeded(server)
 
-        mapTasks = makeMapTasks(files, numWorkers)
-
-        fmt.Printf("Leader created %d map tasks\n", len(mapTasks))
-    }
-
-    var currWorkerTasks map[int]shared.Task
-    err := server.Call("TaskAssignments.GetAllTasks", 0, &currWorkerTasks)
+    var phase string
+    err := server.Call("TaskAssignments.GetPhase", 0, &phase)
     if err != nil {
-        fmt.Println("GetAllTasks error:", err)
+        fmt.Println("GetPhase error:", err)
         return
     }
 
-    syncCompletedTasks(currWorkerTasks)
+    var mapDone bool
+    err = server.Call("TaskAssignments.AllComplete", shared.TASK_MAP, &mapDone)
+    if err != nil {
+        fmt.Println("AllComplete map error:", err)
+        return
+    }
+
+    if phase == shared.TASK_MAP && mapDone {
+        var ok bool
+        err = server.Call("TaskAssignments.SetPhase", shared.TASK_REDUCE, &ok)
+        if err != nil {
+            fmt.Println("SetPhase error:", err)
+            return
+        }
+
+        phase = shared.TASK_REDUCE
+        fmt.Println("Map phase complete. Starting reduce phase.")
+    }
+
+    var workerTasks map[int]shared.Task
+    err = server.Call("TaskAssignments.GetWorkerTasks", 0, &workerTasks)
+    if err != nil {
+        fmt.Println("GetWorkerTasks error:", err)
+        return
+    }
 
     for workerID := 1; workerID <= MAX_NODES; workerID++ {
         if workerID == self_node.ID {
             continue
         }
 
-        currentTask, exists := currWorkerTasks[workerID]
-        if exists && currentTask.Status == shared.TASK_INPROGRESS {
+        currentTask, exists := workerTasks[workerID]
+        workerFree := !exists ||
+            currentTask.Status == shared.TASK_COMPLETE ||
+            currentTask.Status == shared.TASK_IDLE
+
+        if !workerFree {
             continue
         }
 
-        taskIndex, found := findIdleTask()
-        if !found {
+        var idleTask shared.Task
+        err = server.Call("TaskAssignments.GetIdleTask", phase, &idleTask)
+        if err != nil {
+            fmt.Println("GetIdleTask error:", err)
             return
         }
 
-        mapTasks[taskIndex].WorkerID = workerID
-        mapTasks[taskIndex].Status = shared.TASK_INPROGRESS
-        mapTasks[taskIndex].LeaderID = self_node.ID
-        mapTasks[taskIndex].Term = self_node.Term
+        if idleTask.TypeOfTask == shared.TASK_WAIT {
+            return
+        }
+
+        idleTask.WorkerID = workerID
+        idleTask.LeaderID = self_node.ID
+        idleTask.Term = self_node.Term
 
         var ok bool
-        err := server.Call("TaskAssignments.AssignTask", mapTasks[taskIndex], &ok)
+        err = server.Call("TaskAssignments.AssignTask", idleTask, &ok)
         if err != nil {
             fmt.Println("AssignTask error:", err)
-            mapTasks[taskIndex].Status = shared.TASK_IDLE
-            mapTasks[taskIndex].WorkerID = 0
             continue
         }
 
         fmt.Printf(
-            "Leader assigned task %d [%d:%d] to node %d\n",
-            mapTasks[taskIndex].ID,
-            mapTasks[taskIndex].ShardStart,
-            mapTasks[taskIndex].ShardEnd,
+            "Leader assigned %s task %d shard %d to node %d\n",
+            idleTask.TypeOfTask,
+            idleTask.ID,
+            idleTask.ShardNo,
             workerID,
         )
     }

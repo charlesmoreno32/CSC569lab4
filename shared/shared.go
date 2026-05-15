@@ -26,6 +26,7 @@ const (
     TASK_IDLE       = "idle"
     TASK_INPROGRESS = "inprogress"
     TASK_COMPLETE   = "complete"
+    PHASE_COMPLETE   = "complete"
 )
 
 type KeyValue struct {
@@ -361,21 +362,41 @@ type Task struct {
 }
 
 type TaskAssignments struct {
-    Tasks   map[int]Task // Map of workerID to Task, what task each worker node is assigned
-    mu      sync.Mutex
+    WorkerTasks map[int]Task // workerID -> current task for that worker
+    AllTasks    map[int]Task // taskID -> task
+    Phase       string        // "map", "reduce", or "complete"
+    mu          sync.Mutex
 }
 
 func NewTaskAssignments() *TaskAssignments {
     return &TaskAssignments{
-        Tasks: make(map[int]Task),
+        WorkerTasks: make(map[int]Task),
+        AllTasks:    make(map[int]Task),
+        Phase:       TASK_MAP,
     }
+}
+
+func (m *TaskAssignments) AddTasks(tasks []Task, reply *bool) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    for _, task := range tasks {
+        if _, exists := m.AllTasks[task.ID]; !exists {
+            m.AllTasks[task.ID] = task
+        }
+    }
+
+    *reply = true
+    return nil
 }
 
 func (m *TaskAssignments) AssignTask(task Task, reply *bool) error {
     m.mu.Lock()
     defer m.mu.Unlock()
 
-    m.Tasks[task.WorkerID] = task
+    task.Status = TASK_INPROGRESS
+    m.WorkerTasks[task.WorkerID] = task
+    m.AllTasks[task.ID] = task
 
     *reply = true
     return nil
@@ -385,8 +406,8 @@ func (m *TaskAssignments) GetTask(workerID int, reply *Task) error {
     m.mu.Lock()
     defer m.mu.Unlock()
 
-    task, exists := m.Tasks[workerID]
-    if !exists {
+    task, exists := m.WorkerTasks[workerID]
+    if !exists || task.Status == TASK_COMPLETE || task.Status == TASK_IDLE {
         *reply = Task{TypeOfTask: TASK_WAIT}
         return nil
     }
@@ -399,14 +420,15 @@ func (m *TaskAssignments) CompleteTask(workerID int, reply *bool) error {
     m.mu.Lock()
     defer m.mu.Unlock()
 
-    task, exists := m.Tasks[workerID]
+    task, exists := m.WorkerTasks[workerID]
     if !exists {
         *reply = false
         return nil
     }
 
     task.Status = TASK_COMPLETE
-    m.Tasks[workerID] = task
+    m.WorkerTasks[workerID] = task
+    m.AllTasks[task.ID] = task
 
     *reply = true
     return nil
@@ -416,29 +438,94 @@ func (m *TaskAssignments) FailTask(workerID int, reply *bool) error {
     m.mu.Lock()
     defer m.mu.Unlock()
 
-    task, exists := m.Tasks[workerID]
+    task, exists := m.WorkerTasks[workerID]
     if !exists {
         *reply = false
         return nil
     }
 
+    delete(m.WorkerTasks, workerID)
+
     task.Status = TASK_IDLE
     task.WorkerID = 0
-    m.Tasks[workerID] = task
+    m.AllTasks[task.ID] = task
 
     *reply = true
     return nil
 }
 
-func (m *TaskAssignments) GetAllTasks(dummy int, reply *map[int]Task) error {
+func (m *TaskAssignments) GetWorkerTasks(dummy int, reply *map[int]Task) error {
     m.mu.Lock()
     defer m.mu.Unlock()
 
     copyTasks := make(map[int]Task)
-    for workerID, task := range m.Tasks {
+    for workerID, task := range m.WorkerTasks {
         copyTasks[workerID] = task
     }
 
     *reply = copyTasks
+    return nil
+}
+
+func (m *TaskAssignments) GetIdleTask(taskType string, reply *Task) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    for _, task := range m.AllTasks {
+        if task.TypeOfTask == taskType && task.Status == TASK_IDLE {
+            *reply = task
+            return nil
+        }
+    }
+
+    *reply = Task{TypeOfTask: TASK_WAIT}
+    return nil
+}
+
+func (m *TaskAssignments) AllComplete(taskType string, reply *bool) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    found := false
+
+    for _, task := range m.AllTasks {
+        if task.TypeOfTask != taskType {
+            continue
+        }
+
+        found = true
+
+        if task.Status != TASK_COMPLETE {
+            *reply = false
+            return nil
+        }
+    }
+
+    *reply = found
+    return nil
+}
+
+func (m *TaskAssignments) GetPhase(dummy int, reply *string) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    *reply = m.Phase
+    return nil
+}
+
+func (m *TaskAssignments) SetPhase(phase string, reply *bool) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    m.Phase = phase
+    *reply = true
+    return nil
+}
+
+func (m *TaskAssignments) IsEmpty(dummy int, reply *bool) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    *reply = len(m.AllTasks) == 0
     return nil
 }
