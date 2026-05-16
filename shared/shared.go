@@ -2,7 +2,6 @@ package shared
 
 import (
 	//    "fmt"
-	"CSC569lab4/shared"
 	"errors"
 	"fmt"
 	"log"
@@ -322,7 +321,7 @@ func CombineTables(primary *Membership, other *Membership) *Membership {
 /*---------------*/
 // MapReduce and Log Replication implementation
 
-func LoadPlugin(filename string) (func(string, string) []shared.KeyValue, func(string, []string) string) {
+func LoadPlugin(filename string) (func(string, string) []KeyValue, func(string, []string) string) {
 	p, err := plugin.Open(filename)
 	if err != nil {
 		log.Fatalf("cannot load plugin %v", filename)
@@ -331,7 +330,7 @@ func LoadPlugin(filename string) (func(string, string) []shared.KeyValue, func(s
 	if err != nil {
 		log.Fatalf("cannot find Map in %v", filename)
 	}
-	mapf := xmapf.(func(string, string) []shared.KeyValue)
+	mapf := xmapf.(func(string, string) []KeyValue)
 	xreducef, err := p.Lookup("Reduce")
 	if err != nil {
 		log.Fatalf("cannot find Reduce in %v", filename)

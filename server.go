@@ -4,7 +4,6 @@ import (
 	"io"
 	"net/http"
 	"net/rpc"
-
 	"CSC569lab4/shared"
 )
 
