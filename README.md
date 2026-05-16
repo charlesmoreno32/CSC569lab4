@@ -1,44 +1,36 @@
-# Election/Coordination Protocol (RAFT)
+# MapReduce with Leader Election
 
 ## Miriam Brunet, Charles Moreno, Toby Mui
 
-Lab 3
+Lab 4
 
-Can Be done in groups of 1-4 people
+The provided code is a starter code you can ignore and create your own from scratch, use the membership (heartbeat), leader protocol from previous labs.
 
-Add consensus or leader algorithm protocol, you can add Paxos or Raft,  to your Membership lab 2
+1. Master pings each worker periodically – If no response is received within a certain time the worker is marked as failed – Map & reduce task given to this worker are reset back to the initial state and rescheduled for other workers
+
+2. On failure:
+
+Worker failure – Detect failure via periodic heartbeats – Re-execute in-progress map/reduce tasks
+
+Master failure – Single point of failure; Resume Execution from Log . SO make sure you have a log on the master and this log  is replicated on  other  server.
+
+3. IS a Map Reduce implementation so: master will create mappers and reducers and they should operate on different chuncks of file . For simplicity, your task is only counting word frequency 
 
  
 
-Coordination on a Failure Tolerant System
-
-Implement Paxos as described in the article : Paxos Made Simple 
-  2. Implement a Simplified version of Paxos Consensus protocol for leader election. RAFT.
-
-If you implement both then you get 20 extra points towards the final
+It is a simulation. So, as with other labs in this clas,s give me your readme file so I can run your code
 
  
 
-Create 8 nodes for this simulations
+Upload: same as for all the other labs
 
-For Raft Implementation:
+Notes: mrsequential.go depends on some files in an ../mr folder, but since this folder just contains the client /server written using RPC  is not necessary.
 
-Every node can be : Follower, Candidate or Leader
+ 
 
-All nodes start as followers.
-If followers don’t hear from the leader in an X amount of time, then they can become candidates. Every node has a timeout Y (a random number between 150-300ms) which is the amount of time each follower has to wait until becoming candidate, if the node receives a message from the leader before this timeout expires than the timer will be reset
-The candidate requests votes from other nodes (it does also vote for himself), in this case “other” nodes are going to be all nodes in the system. The candidate also waits for Z time to receive the votes and counts them at the end of this timer
-If the receiving nodes hasn’t yet voted in this term, then the Node votes for the candidate
+## Log Replication/Consistency using RAFT
+If a Paxos/Raft-based server reboots it should resume service where it left off. This requires that Raft keep persistent state that survives a reboot. The paper's Figure 2 mentions which state should be persistent.
 
+Write the functionality that Raft describes to keep logs consistent (as explained in the slides and article)
 
-5. If the candidate gets a majority than the candidate becomes the leader
-
-6. If two nodes become candidates at same time:
-
-
-
-To break the tie, wait for a random amount of time and hold elections again
-
-You can use Go routines or RPC  for the Implementation.
-
-If you implement both algorithms, try to do some performance evaluation; who reaches consensus sooner?
+![Log Replication][https://canvas.calpoly.edu/courses/179376/files/20739851/preview]
