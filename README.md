@@ -25,4 +25,5 @@ If a Paxos/Raft-based server reboots it should resume service where it left off.
 
 Write the functionality that Raft describes to keep logs consistent (as explained in the slides and article)
 
-![Log Replication][https://canvas.calpoly.edu/courses/179376/files/20739851/preview]
+<img width="687" height="371" alt="Raft Log Duplication" src="https://github.com/user-attachments/assets/1695bea7-9daa-4966-be39-9680c88385fa" />
+
