@@ -2,12 +2,13 @@ package main
 
 import (
 	"CSC569lab4/shared"
-	"encoding/json"
 	"fmt"
-	"io"
+	"io/ioutil"
+	"log"
 	"math/rand"
 	"net/rpc"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -98,6 +99,17 @@ func main() {
         }
 
         fmt.Println("Node", id, "will fail after", Z_TIME, "seconds")
+
+        if len(os.Args) < 3 {
+            fmt.Fprintf(os.Stderr, "Usage: go run client.go [node_id] inputfiles...\n")
+            os.Exit(1)
+        }
+
+        files := os.Args[2:]
+
+        for _, file := range files {
+            fmt.Println("Input file:", file)
+        }
 
         currTime := calcTime()
         // Construct self
@@ -227,26 +239,6 @@ func enterElection(server *rpc.Client) {
     }
 }
 
-func readShard(task shared.Task) (string, error) { //Change to read lines
-    file, err := os.Open(task.Filename)
-    if err != nil {
-        return "", err
-    }
-
-    size := task.ShardEnd - task.ShardStart //Size should be num lines
-    buf := make([]byte, size) // Lines are constant num bytes?? Check
-
-	//This may cause error: multiple files should not be reading simultaneously
-    _, err = file.ReadAt(buf, int64(task.ShardStart))
-	//Should pass buffers
-    if err != nil && err != io.EOF {
-        return "", err
-    }
-
-    file.Close()
-    return string(buf), nil
-}
-
 func runMapTask(task shared.Task) bool {
 	// File names should be passed in from main to sub functions. Filenames stored on master
 	if len(os.Args) < 3 {
@@ -264,7 +256,7 @@ func runMapTask(task shared.Task) bool {
 	// -----------------
 	// PHASE = MAP
 	// -----------------
-	intermediate := []mr.KeyValue{}
+	intermediate := []shared.KeyValue{}
 	//Iterate through files
 	for _, filename := range os.Args[2:] { //HERE MAKE PARALLEL. ASSIGN TASKS
 		file, err := os.Open(filename)
@@ -286,7 +278,7 @@ func runMapTask(task shared.Task) bool {
 	// rather than being partitioned into NxM buckets.
 	//
 
-	sort.Sort(ByKey(intermediate))
+	sort.Sort(shared.ByKey(intermediate))
 
 	oname := "mr-out-0"
 	ofile, _ := os.Create(oname)
@@ -319,6 +311,7 @@ func runMapTask(task shared.Task) bool {
 	}
 
 	ofile.Close()
+    return true
 }
 
 func workerCheckTask(server *rpc.Client) {
@@ -397,9 +390,6 @@ func makeMapTasks(files []string, numWorkers int) []shared.Task {
 
             task := shared.Task{
                 ID:         taskID,
-                ShardNo:    shardNo,
-                ShardStart: start,
-                ShardEnd:   end,
                 TypeOfTask: shared.TASK_MAP,
                 Filename:   filename,
                 Term:       self_node.Term,
@@ -527,10 +517,10 @@ func leaderAssignTasks(server *rpc.Client) {
         }
 
         fmt.Printf(
-            "Leader assigned %s task %d shard %d to node %d\n",
+            "Leader assigned %s task %d file %d to node %d\n",
             idleTask.TypeOfTask,
             idleTask.ID,
-            idleTask.ShardNo,
+            idleTask.Filename,
             workerID,
         )
     }

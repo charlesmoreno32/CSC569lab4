@@ -33,6 +33,13 @@ type KeyValue struct {
 	Value string
 }
 
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
+
 // Node struct represents a computing node.
 type Node struct {
     ID        int
@@ -349,9 +356,6 @@ type LogEntry struct {
 
 type Task struct {
     ID int
-    ShardNo int
-    ShardStart int
-    ShardEnd int
     TypeOfTask string
     Filename string
     Term int
