@@ -247,35 +247,69 @@ func readShard(task shared.Task) (string, error) {
 
 func runMapTask(task shared.Task) bool {
     mapf, reducef := shared.LoadPlugin("wc.so")
+	//
+	// read each input file,
+	// pass it to Map,
+	// accumulate the intermediate Map output.
+	//
 
-    contents, err := readShard(task)
-    if err != nil {
-        fmt.Println("read shard error:", err)
-        return false
-    }
+	// -----------------
+	// PHASE = MAP
+	// -----------------
+	intermediate := []mr.KeyValue{}
+	for _, filename := range os.Args[2:] { //HERE MAKE PARALLEL. ASSIGN TASKS
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+		content, err := ioutil.ReadAll(file)
+		if err != nil {
+			log.Fatalf("cannot read %v", filename)
+		}
+		file.Close()
+		kva := mapf(filename, string(content))  //WAIT FOR TASK TO FINISH
+		intermediate = append(intermediate, kva...)
+	}
 
-    kva := mapf(task.Filename, contents)
+	//
+	// a big difference from real MapReduce is that all the
+	// intermediate data is in one place, intermediate[],
+	// rather than being partitioned into NxM buckets.
+	//
 
-    outputName := fmt.Sprintf("mr-map-%d-%d.json", task.WorkerID, task.ID)
+	sort.Sort(ByKey(intermediate))
 
-    ofile, err := os.Create(outputName)
-    if err != nil {
-        fmt.Println("cannot create map output:", err)
-        return false
-    }
+	oname := "mr-out-0"
+	ofile, _ := os.Create(oname)
 
-    enc := json.NewEncoder(ofile)
+	//
+	// call Reduce on each distinct key in intermediate[],
+	// and print the result to mr-out-0.
+	//
+	
+	// -----------------
+	// PHASE = REDUCE
+	// -----------------
+	
+	i := 0
+	for i < len(intermediate) { //MAKE PARALLEL - ASSIGN REDUCERS
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
 
-    for _, kv := range kva {
-        if err := enc.Encode(&kv); err != nil {
-            fmt.Println("encode error:", err)
-            return false
-        }
-    }
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
 
-    fmt.Printf("Node %d wrote %s\n", self_node.ID, outputName)
-    ofile.Close()
-    return true
+		i = j
+	}
+
+	ofile.Close()
 }
 
 func workerCheckTask(server *rpc.Client) {
