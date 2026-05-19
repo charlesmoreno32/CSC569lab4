@@ -227,16 +227,18 @@ func enterElection(server *rpc.Client) {
     }
 }
 
-func readShard(task shared.Task) (string, error) {
+func readShard(task shared.Task) (string, error) { //Change to read lines
     file, err := os.Open(task.Filename)
     if err != nil {
         return "", err
     }
 
-    size := task.ShardEnd - task.ShardStart
-    buf := make([]byte, size)
+    size := task.ShardEnd - task.ShardStart //Size should be num lines
+    buf := make([]byte, size) // Lines are constant num bytes?? Check
 
+	//This may cause error: multiple files should not be reading simultaneously
     _, err = file.ReadAt(buf, int64(task.ShardStart))
+	//Should pass buffers
     if err != nil && err != io.EOF {
         return "", err
     }
