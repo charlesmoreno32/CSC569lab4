@@ -232,7 +232,6 @@ func readShard(task shared.Task) (string, error) {
     if err != nil {
         return "", err
     }
-    defer file.Close()
 
     size := task.ShardEnd - task.ShardStart
     buf := make([]byte, size)
@@ -242,6 +241,7 @@ func readShard(task shared.Task) (string, error) {
         return "", err
     }
 
+    file.Close()
     return string(buf), nil
 }
 
@@ -263,7 +263,6 @@ func runMapTask(task shared.Task) bool {
         fmt.Println("cannot create map output:", err)
         return false
     }
-    defer ofile.Close()
 
     enc := json.NewEncoder(ofile)
 
@@ -275,6 +274,7 @@ func runMapTask(task shared.Task) bool {
     }
 
     fmt.Printf("Node %d wrote %s\n", self_node.ID, outputName)
+    ofile.Close()
     return true
 }
 
