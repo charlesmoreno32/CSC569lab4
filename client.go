@@ -141,7 +141,7 @@ func runAfterX(server *rpc.Client, node *shared.Node, membership **shared.Member
     //TODO
     // HB counter increases
     //server.Call(Node.Update??Hbcounter++)
-    fmt.Println("********************* Heartbeat *********************")
+    //fmt.Println("********************* Heartbeat *********************")
     if node.Alive {
         node.Hbcounter++                //Update self
         node.Time = calcTime()
@@ -257,6 +257,7 @@ func runMapTask(task shared.Task) bool {
 	// PHASE = MAP
 	// -----------------
 	intermediate := []mr.KeyValue{}
+	//Rather than iterating through file, break file into shards & iterate through shards
 	for _, filename := range os.Args[2:] { //HERE MAKE PARALLEL. ASSIGN TASKS
 		file, err := os.Open(filename)
 		if err != nil {
@@ -267,7 +268,7 @@ func runMapTask(task shared.Task) bool {
 			log.Fatalf("cannot read %v", filename)
 		}
 		file.Close()
-		kva := mapf(filename, string(content))  //WAIT FOR TASK TO FINISH
+		kva := mapf(filename, string(content))  //WAIT FOR TASK (shard) TO FINISH
 		intermediate = append(intermediate, kva...)
 	}
 
