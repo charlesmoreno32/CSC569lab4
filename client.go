@@ -248,6 +248,12 @@ func readShard(task shared.Task) (string, error) { //Change to read lines
 }
 
 func runMapTask(task shared.Task) bool {
+	// File names should be passed in from main to sub functions. Filenames stored on master
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage: mrsequential xxx.so inputfiles...\n")
+		os.Exit(1)
+	}
+
     mapf, reducef := shared.LoadPlugin("wc.so")
 	//
 	// read each input file,
@@ -259,7 +265,7 @@ func runMapTask(task shared.Task) bool {
 	// PHASE = MAP
 	// -----------------
 	intermediate := []mr.KeyValue{}
-	//Rather than iterating through file, break file into shards & iterate through shards
+	//Iterate through files
 	for _, filename := range os.Args[2:] { //HERE MAKE PARALLEL. ASSIGN TASKS
 		file, err := os.Open(filename)
 		if err != nil {
