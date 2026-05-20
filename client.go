@@ -471,7 +471,7 @@ func mergeOutput() {
     fmt.Println("Final output written to output/mr-out.txt")
 }
 
-func leaderAssignTasks(server *rpc.Client, files []string) {
+func leaderAssignTasks(server *rpc.Client, files []string, membership **shared.Membership) {
     if self_node.Role != shared.ROLE_LEADER {
         return
     }
@@ -517,10 +517,8 @@ func leaderAssignTasks(server *rpc.Client, files []string) {
             }
             phase = shared.TASK_REDUCE
             fmt.Println("Map phase complete. Starting reduce phase.")
-
-            // Seed reduce tasks now that map is done
             startReduceTasks(server, files)
-            return // Let next tick handle assigning reduce tasks
+            return
         }
     }
 
@@ -537,7 +535,17 @@ func leaderAssignTasks(server *rpc.Client, files []string) {
         }
     }
 
-    // Assign idle tasks to free workers
+    // Build set of alive workers from membership
+    mu_lmemb.Lock()
+    aliveWorkers := map[int]bool{}
+    for _, node := range (*membership).Members {
+        if node.Alive && node.ID != self_node.ID {
+            aliveWorkers[node.ID] = true
+        }
+    }
+    mu_lmemb.Unlock()
+
+    // Get current worker task assignments
     var workerTasks map[int]shared.Task
     err = server.Call("TaskAssignments.GetWorkerTasks", 0, &workerTasks)
     if err != nil {
@@ -545,11 +553,17 @@ func leaderAssignTasks(server *rpc.Client, files []string) {
         return
     }
 
-    for workerID := 1; workerID <= MAX_NODES; workerID++ {
-        if workerID == self_node.ID {
-            continue
+    // Reclaim tasks from dead or missing workers
+    for workerID := range workerTasks {
+        if !aliveWorkers[workerID] {
+            fmt.Printf("Worker %d is dead, reclaiming task\n", workerID)
+            var ok bool
+            server.Call("TaskAssignments.FailTask", workerID, &ok)
         }
+    }
 
+    // Assign idle tasks to free alive workers
+    for workerID := range aliveWorkers {
         currentTask, exists := workerTasks[workerID]
         workerFree := !exists || currentTask.Status == shared.TASK_COMPLETE
 
@@ -565,7 +579,7 @@ func leaderAssignTasks(server *rpc.Client, files []string) {
         }
 
         if idleTask.TypeOfTask == shared.TASK_WAIT {
-            return // No more idle tasks this phase
+            return
         }
 
         idleTask.WorkerID = workerID
@@ -631,7 +645,7 @@ func runAfterY(server *rpc.Client, neighbors [2]int, membership **shared.Members
                     mu_lmemb.Unlock()
                 }
             }
-            leaderAssignTasks(server, files)
+            leaderAssignTasks(server, files, membership)
         }
 
         mu_lmemb.Lock()
