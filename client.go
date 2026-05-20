@@ -2,13 +2,16 @@ package main
 
 import (
 	"CSC569lab4/shared"
+	"bufio"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"net/rpc"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -241,7 +244,7 @@ func enterElection(server *rpc.Client) {
 func runMapTask(task shared.Task) bool {
     mapf, _ := shared.LoadPlugin("wc.so")
 
-    file, err := os.Open(task.Filename)
+    file, err := os.Open(task.Filename) // open from original path
     if err != nil {
         fmt.Println("cannot open", task.Filename)
         return false
@@ -253,15 +256,14 @@ func runMapTask(task shared.Task) bool {
         file.Close()
         return false
     }
-
     file.Close()
 
     kva := mapf(task.Filename, string(content))
-
     sort.Sort(shared.ByKey(kva))
 
-    // one intermediate output per map task
-    oname := fmt.Sprintf("intermediate/map/%s-task%d.txt", task.Filename, task.ID)
+    // Use just the base name so intermediate/ stays flat
+    base := filepath.Base(task.Filename)
+    oname := fmt.Sprintf("intermediate/%s", base)
 
     ofile, err := os.Create(oname)
     if err != nil {
@@ -272,16 +274,60 @@ func runMapTask(task shared.Task) bool {
     for _, kv := range kva {
         fmt.Fprintf(ofile, "%v %v\n", kv.Key, kv.Value)
     }
-
     ofile.Close()
 
-    fmt.Printf(
-        "Worker %d completed MAP task %d on %s\n",
-        self_node.ID,
-        task.ID,
-        task.Filename,
-    )
+    fmt.Printf("Worker %d completed MAP task %d on %s\n", self_node.ID, task.ID, task.Filename)
+    return true
+}
 
+func runReduceTask(task shared.Task) bool {
+    _, reducef := shared.LoadPlugin("wc.so")
+
+    // Read from intermediate using base name
+    base := filepath.Base(task.Filename)
+    iname := fmt.Sprintf("intermediate/%s", base)
+    ifile, err := os.Open(iname)
+    if err != nil {
+        fmt.Println("cannot open intermediate file", iname)
+        return false
+    }
+    defer ifile.Close()
+
+    var kva []shared.KeyValue
+    for {
+        var kv shared.KeyValue
+        _, err := fmt.Fscan(ifile, &kv.Key, &kv.Value)
+        if err != nil {
+            break
+        }
+        kva = append(kva, kv)
+    }
+
+    sort.Sort(shared.ByKey(kva))
+
+    oname := fmt.Sprintf("output/tmp-reduce-%d", task.ID-200)
+    ofile, err := os.Create(oname)
+    if err != nil {
+        fmt.Println("cannot create output file", oname)
+        return false
+    }
+    defer ofile.Close()
+
+    i := 0
+    for i < len(kva) {
+        j := i + 1
+        for j < len(kva) && kva[j].Key == kva[i].Key {
+            j++
+        }
+        var values []string
+        for k := i; k < j; k++ {
+            values = append(values, kva[k].Value)
+        }
+        fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, reducef(kva[i].Key, values))
+        i = j
+    }
+
+    fmt.Printf("Worker %d completed REDUCE task %d on %s\n", self_node.ID, task.ID, task.Filename)
     return true
 }
 
@@ -308,7 +354,7 @@ func workerCheckTask(server *rpc.Client) {
     if task.TypeOfTask == shared.TASK_MAP {
         success = runMapTask(task)
     } else if task.TypeOfTask == shared.TASK_REDUCE {
-        // success = runReduceTask(task)
+        success = runReduceTask(task)
     }
 
     var ok bool
@@ -341,32 +387,6 @@ func makeMapTasks(files []string) []shared.Task {
     return tasks
 }
 
-func startMapIfNeeded(server *rpc.Client, files []string) {
-    var isEmpty bool
-
-    err := server.Call("TaskAssignments.IsEmpty", 0, &isEmpty)
-    if err != nil {
-        fmt.Println("IsEmpty error:", err)
-        return
-    }
-
-    if !isEmpty {
-        fmt.Println("MapReduce already in progress")
-        return
-    }
-
-    tasks := makeMapTasks(files)
-
-    var ok bool
-    err = server.Call("TaskAssignments.AddTasks", tasks, &ok)
-    if err != nil {
-        fmt.Println("AddTasks error:", err)
-        return
-    }
-
-    fmt.Printf("Leader registered %d map tasks\n", len(tasks))
-}
-
 func startReduceTasks(server *rpc.Client, files []string) {
     tasks := []shared.Task{}
     taskID := 200
@@ -394,14 +414,67 @@ func startReduceTasks(server *rpc.Client, files []string) {
 
     fmt.Printf("Leader registered %d map tasks\n", len(tasks))
 }
-// when reduce assignments are done, somehow clear task assignments
+
+func mergeOutput() {
+    counts := make(map[string]int)
+
+    entries, err := os.ReadDir("output")
+    if err != nil {
+        fmt.Println("cannot read output dir:", err)
+        return
+    }
+
+    for _, entry := range entries {
+        if !strings.HasPrefix(entry.Name(), "tmp-reduce-") {
+            continue
+        }
+        f, err := os.Open(fmt.Sprintf("output/%s", entry.Name()))
+        if err != nil {
+            continue
+        }
+
+        scanner := bufio.NewScanner(f)
+        for scanner.Scan() {
+            line := scanner.Text()
+            parts := strings.Fields(line)
+            if len(parts) != 2 {
+                continue
+            }
+            key := parts[0]
+            val, err := strconv.Atoi(parts[1])
+            if err != nil {
+                fmt.Println("bad value for key", key, ":", parts[1])
+                continue
+            }
+            counts[key] += val
+        }
+        f.Close()
+    }
+
+    var keys []string
+    for k := range counts {
+        keys = append(keys, k)
+    }
+    sort.Strings(keys)
+
+    out, err := os.Create("output/mr-out.txt")
+    if err != nil {
+        fmt.Println("cannot create mr-out.txt:", err)
+        return
+    }
+    defer out.Close()
+
+    for _, k := range keys {
+        fmt.Fprintf(out, "%v %v\n", k, counts[k])
+    }
+
+    fmt.Println("Final output written to output/mr-out.txt")
+}
 
 func leaderAssignTasks(server *rpc.Client, files []string) {
     if self_node.Role != shared.ROLE_LEADER {
         return
     }
-
-    startMapIfNeeded(server, files)
 
     var phase string
     err := server.Call("TaskAssignments.GetPhase", 0, &phase)
@@ -410,45 +483,61 @@ func leaderAssignTasks(server *rpc.Client, files []string) {
         return
     }
 
-    var mapDone bool
-    err = server.Call("TaskAssignments.AllComplete", shared.TASK_MAP, &mapDone)
-    if err != nil {
-        fmt.Println("AllComplete map error:", err)
+    if phase == shared.PHASE_COMPLETE {
         return
     }
 
-    var reduceDone bool
-    err = server.Call("TaskAssignments.AllComplete", shared.TASK_REDUCE, &reduceDone)
-    if err != nil {
-        fmt.Println("AllComplete reduce error:", err)
-        return
-    }
+    if phase == shared.TASK_MAP {
+        var isEmpty bool
+        server.Call("TaskAssignments.IsEmpty", 0, &isEmpty)
+        if isEmpty {
+            tasks := makeMapTasks(files)
+            var ok bool
+            err = server.Call("TaskAssignments.AddTasks", tasks, &ok)
+            if err != nil {
+                fmt.Println("AddTasks error:", err)
+                return
+            }
+            fmt.Printf("Leader registered %d map tasks\n", len(tasks))
+        }
 
-    if phase == shared.TASK_MAP && mapDone {
-        var ok bool
-        err = server.Call("TaskAssignments.SetPhase", shared.TASK_REDUCE, &ok)
+        var mapDone bool
+        err = server.Call("TaskAssignments.AllComplete", shared.TASK_MAP, &mapDone)
         if err != nil {
-            fmt.Println("SetPhase error:", err)
+            fmt.Println("AllComplete error:", err)
             return
         }
 
-        phase = shared.TASK_REDUCE
-        fmt.Println("Map phase complete. Starting reduce phase.")
-        startReduceTasks(server, files)
-    } else if phase == shared.TASK_REDUCE && reduceDone {
-        fmt.Println("Reduce phase complete. MapReduce job finished.")
-        // Reset TaskAssignments for next job
-        var ok bool
-        err = server.Call("TaskAssignments.Reset", 0, &ok)
-        if err != nil {
-            fmt.Println("Reset error:", err)
-            return
-        }
+        if mapDone {
+            var ok bool
+            err = server.Call("TaskAssignments.SetPhase", shared.TASK_REDUCE, &ok)
+            if err != nil {
+                fmt.Println("SetPhase error:", err)
+                return
+            }
+            phase = shared.TASK_REDUCE
+            fmt.Println("Map phase complete. Starting reduce phase.")
 
+            // Seed reduce tasks now that map is done
+            startReduceTasks(server, files)
+            return // Let next tick handle assigning reduce tasks
+        }
     }
 
-    // Check for free workers and assign idle tasks to them
+    if phase == shared.TASK_REDUCE {
+        var reduceDone bool
+        server.Call("TaskAssignments.AllComplete", shared.TASK_REDUCE, &reduceDone)
+        if reduceDone {
+            fmt.Println("Reduce phase complete. MapReduce job finished.")
+            mergeOutput()
+            var ok bool
+            server.Call("TaskAssignments.SetPhase", shared.PHASE_COMPLETE, &ok)
+            server.Call("TaskAssignments.Reset", 0, &ok)
+            return
+        }
+    }
 
+    // Assign idle tasks to free workers
     var workerTasks map[int]shared.Task
     err = server.Call("TaskAssignments.GetWorkerTasks", 0, &workerTasks)
     if err != nil {
@@ -476,7 +565,7 @@ func leaderAssignTasks(server *rpc.Client, files []string) {
         }
 
         if idleTask.TypeOfTask == shared.TASK_WAIT {
-            return
+            return // No more idle tasks this phase
         }
 
         idleTask.WorkerID = workerID
@@ -491,7 +580,7 @@ func leaderAssignTasks(server *rpc.Client, files []string) {
         }
 
         fmt.Printf(
-            "Leader assigned %s task %d file %d to node %d\n",
+            "Leader assigned %s task %d (%s) to node %d\n",
             idleTask.TypeOfTask,
             idleTask.ID,
             idleTask.Filename,

@@ -475,8 +475,11 @@ func (m *TaskAssignments) GetIdleTask(taskType string, reply *Task) error {
     m.mu.Lock()
     defer m.mu.Unlock()
 
-    for _, task := range m.AllTasks {
+    for id, task := range m.AllTasks {
         if task.TypeOfTask == taskType && task.Status == TASK_IDLE {
+            // Claim it immediately so no other call gets the same task
+            task.Status = TASK_INPROGRESS
+            m.AllTasks[id] = task
             *reply = task
             return nil
         }
