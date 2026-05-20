@@ -415,21 +415,14 @@ func startReduceTasks(server *rpc.Client, files []string) {
     fmt.Printf("Leader registered %d map tasks\n", len(tasks))
 }
 
-func mergeOutput() {
+func mergeOutput(files []string) {
     counts := make(map[string]int)
 
-    entries, err := os.ReadDir("output")
-    if err != nil {
-        fmt.Println("cannot read output dir:", err)
-        return
-    }
-
-    for _, entry := range entries {
-        if !strings.HasPrefix(entry.Name(), "tmp-reduce-") {
-            continue
-        }
-        f, err := os.Open(fmt.Sprintf("output/%s", entry.Name()))
+    for i := range files {
+        fname := fmt.Sprintf("output/tmp-reduce-%d", i)
+        f, err := os.Open(fname)
         if err != nil {
+            fmt.Println("cannot open", fname, ":", err)
             continue
         }
 
@@ -527,7 +520,7 @@ func leaderAssignTasks(server *rpc.Client, files []string, membership **shared.M
         server.Call("TaskAssignments.AllComplete", shared.TASK_REDUCE, &reduceDone)
         if reduceDone {
             fmt.Println("Reduce phase complete. MapReduce job finished.")
-            mergeOutput()
+            mergeOutput(files)
             var ok bool
             server.Call("TaskAssignments.SetPhase", shared.PHASE_COMPLETE, &ok)
             server.Call("TaskAssignments.Reset", 0, &ok)
