@@ -430,8 +430,9 @@ func (m *TaskAssignments) CompleteTask(workerID int, reply *bool) error {
     }
 
     task.Status = TASK_COMPLETE
-    m.WorkerTasks[workerID] = task
     m.AllTasks[task.ID] = task
+
+    delete(m.WorkerTasks, workerID)
 
     *reply = true
     return nil
@@ -530,5 +531,17 @@ func (m *TaskAssignments) IsEmpty(dummy int, reply *bool) error {
     defer m.mu.Unlock()
 
     *reply = len(m.AllTasks) == 0
+    return nil
+}
+
+func (m *TaskAssignments) Reset(dummy int, reply *bool) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    m.WorkerTasks = make(map[int]Task)
+    m.AllTasks = make(map[int]Task)
+    m.Phase = TASK_MAP
+
+    *reply = true
     return nil
 }

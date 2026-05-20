@@ -4,7 +4,6 @@ import (
 	"CSC569lab4/shared"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"math/rand"
 	"net/rpc"
 	"os"
@@ -142,7 +141,7 @@ func main() {
         // crashTime := self_node.CrashTime()
 
         time.AfterFunc(time.Second*X_TIME, func() { runAfterX(server, &self_node, &membership, id) })
-        time.AfterFunc(time.Second*Y_TIME, func() { runAfterY(server, neighbors, &membership, id) })
+        time.AfterFunc(time.Second*Y_TIME, func() { runAfterY(server, neighbors, &membership, id, files) })
 //        time.AfterFunc(time.Second*time.Duration(Z_TIME), func() { runAfterZ(server, id) })
 
         wg.Add(1)
@@ -240,77 +239,49 @@ func enterElection(server *rpc.Client) {
 }
 
 func runMapTask(task shared.Task) bool {
-	// File names should be passed in from main to sub functions. Filenames stored on master
-	if len(os.Args) < 3 {
-		fmt.Fprintf(os.Stderr, "Usage: mrsequential xxx.so inputfiles...\n")
-		os.Exit(1)
-	}
+    mapf, _ := shared.LoadPlugin("wc.so")
 
-    mapf, reducef := shared.LoadPlugin("wc.so")
-	//
-	// read each input file,
-	// pass it to Map,
-	// accumulate the intermediate Map output.
-	//
+    file, err := os.Open(task.Filename)
+    if err != nil {
+        fmt.Println("cannot open", task.Filename)
+        return false
+    }
 
-	// -----------------
-	// PHASE = MAP
-	// -----------------
-	intermediate := []shared.KeyValue{}
-	//Iterate through files
-	for _, filename := range os.Args[2:] { //HERE MAKE PARALLEL. ASSIGN TASKS
-		file, err := os.Open(filename)
-		if err != nil {
-			log.Fatalf("cannot open %v", filename)
-		}
-		content, err := ioutil.ReadAll(file)
-		if err != nil {
-			log.Fatalf("cannot read %v", filename)
-		}
-		file.Close()
-		kva := mapf(filename, string(content))  //WAIT FOR TASK (shard) TO FINISH
-		intermediate = append(intermediate, kva...)
-	}
+    content, err := ioutil.ReadAll(file)
+    if err != nil {
+        fmt.Println("cannot read", task.Filename)
+        file.Close()
+        return false
+    }
 
-	//
-	// a big difference from real MapReduce is that all the
-	// intermediate data is in one place, intermediate[],
-	// rather than being partitioned into NxM buckets.
-	//
+    file.Close()
 
-	sort.Sort(shared.ByKey(intermediate))
+    kva := mapf(task.Filename, string(content))
 
-	oname := "mr-out-0"
-	ofile, _ := os.Create(oname)
+    sort.Sort(shared.ByKey(kva))
 
-	//
-	// call Reduce on each distinct key in intermediate[],
-	// and print the result to mr-out-0.
-	//
-	
-	// -----------------
-	// PHASE = REDUCE
-	// -----------------
-	
-	i := 0
-	for i < len(intermediate) { //MAKE PARALLEL - ASSIGN REDUCERS
-		j := i + 1
-		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
-			j++
-		}
-		values := []string{}
-		for k := i; k < j; k++ {
-			values = append(values, intermediate[k].Value)
-		}
-		output := reducef(intermediate[i].Key, values)
+    // one intermediate output per map task
+    oname := fmt.Sprintf("intermediate/map/%s-task%d.txt", task.Filename, task.ID)
 
-		// this is the correct format for each line of Reduce output.
-		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+    ofile, err := os.Create(oname)
+    if err != nil {
+        fmt.Println("cannot create", oname)
+        return false
+    }
 
-		i = j
-	}
+    for _, kv := range kva {
+        fmt.Fprintf(ofile, "%v %v\n", kv.Key, kv.Value)
+    }
 
-	ofile.Close()
+    ofile.Close()
+
+    fmt.Printf(
+        "Worker %d completed MAP task %d on %s\n",
+        self_node.ID,
+        task.ID,
+        task.Filename,
+    )
+
     return true
 }
 
@@ -330,7 +301,7 @@ func workerCheckTask(server *rpc.Client) {
         return
     }
 
-    fmt.Printf("Node %d got task %d\n", self_node.ID, task.ID)
+    fmt.Printf("Node %d running task %d\n", self_node.ID, task.ID)
 
     // TODO: actually run map/reduce here
     success := false
@@ -348,71 +319,29 @@ func workerCheckTask(server *rpc.Client) {
     }
 }
 
-func isBoundary(b byte) bool {
-    return b == ' ' || b == '\n' || b == '\t' || b == '\r'
-}
-
-// Divides the file into shards and creates tasks for each shard.
-func makeMapTasks(files []string, numWorkers int) []shared.Task {
+// creates a task to be done by a node for each file
+func makeMapTasks(files []string) []shared.Task {
     tasks := []shared.Task{}
-    taskID := 1
-
-    if numWorkers <= 0 {
-        numWorkers = 1
-    }
+    taskID := 100
 
     for _, filename := range files {
-        content, err := os.ReadFile(filename)
-        if err != nil {
-            fmt.Println("Cannot read file:", filename, err)
-            continue
+        task := shared.Task{
+            ID:         taskID,
+            TypeOfTask: shared.TASK_MAP,
+            Filename:   filename,
+            Term:       self_node.Term,
+            Status:     shared.TASK_IDLE,
+            LeaderID:   self_node.ID,
         }
 
-        fileSize := len(content)
-        if fileSize == 0 {
-            continue
-        }
-
-        baseShardSize := (fileSize + numWorkers - 1) / numWorkers
-
-        start := 0
-        shardNo := 0
-
-        for start < fileSize {
-            end := start + baseShardSize
-            if end > fileSize {
-                end = fileSize
-            }
-
-            for end < fileSize && !isBoundary(content[end]) {
-                end++
-            }
-
-            task := shared.Task{
-                ID:         taskID,
-                TypeOfTask: shared.TASK_MAP,
-                Filename:   filename,
-                Term:       self_node.Term,
-                Status:     shared.TASK_IDLE,
-                LeaderID:   self_node.ID,
-            }
-
-            tasks = append(tasks, task)
-
-            taskID++
-            shardNo++
-
-            start = end
-            for start < fileSize && isBoundary(content[start]) {
-                start++
-            }
-        }
+        tasks = append(tasks, task)
+        taskID++
     }
 
     return tasks
 }
 
-func startMapReduceIfNeeded(server *rpc.Client) {
+func startMapIfNeeded(server *rpc.Client, files []string) {
     var isEmpty bool
 
     err := server.Call("TaskAssignments.IsEmpty", 0, &isEmpty)
@@ -422,13 +351,11 @@ func startMapReduceIfNeeded(server *rpc.Client) {
     }
 
     if !isEmpty {
+        fmt.Println("MapReduce already in progress")
         return
     }
 
-    files := []string{"pg-being_ernest.txt"}
-    numWorkers := MAX_NODES - 1
-
-    tasks := makeMapTasks(files, numWorkers)
+    tasks := makeMapTasks(files)
 
     var ok bool
     err = server.Call("TaskAssignments.AddTasks", tasks, &ok)
@@ -440,12 +367,41 @@ func startMapReduceIfNeeded(server *rpc.Client) {
     fmt.Printf("Leader registered %d map tasks\n", len(tasks))
 }
 
-func leaderAssignTasks(server *rpc.Client) {
+func startReduceTasks(server *rpc.Client, files []string) {
+    tasks := []shared.Task{}
+    taskID := 200
+
+    for _, filename := range files {
+        task := shared.Task{
+            ID:         taskID,
+            TypeOfTask: shared.TASK_REDUCE,
+            Filename:   filename,
+            Term:       self_node.Term,
+            Status:     shared.TASK_IDLE,
+            LeaderID:   self_node.ID,
+        }
+
+        tasks = append(tasks, task)
+        taskID++
+    }
+
+    var ok bool
+    err := server.Call("TaskAssignments.AddTasks", tasks, &ok)
+    if err != nil {
+        fmt.Println("AddTasks error:", err)
+        return
+    }
+
+    fmt.Printf("Leader registered %d map tasks\n", len(tasks))
+}
+// when reduce assignments are done, somehow clear task assignments
+
+func leaderAssignTasks(server *rpc.Client, files []string) {
     if self_node.Role != shared.ROLE_LEADER {
         return
     }
 
-    startMapReduceIfNeeded(server)
+    startMapIfNeeded(server, files)
 
     var phase string
     err := server.Call("TaskAssignments.GetPhase", 0, &phase)
@@ -461,6 +417,13 @@ func leaderAssignTasks(server *rpc.Client) {
         return
     }
 
+    var reduceDone bool
+    err = server.Call("TaskAssignments.AllComplete", shared.TASK_REDUCE, &reduceDone)
+    if err != nil {
+        fmt.Println("AllComplete reduce error:", err)
+        return
+    }
+
     if phase == shared.TASK_MAP && mapDone {
         var ok bool
         err = server.Call("TaskAssignments.SetPhase", shared.TASK_REDUCE, &ok)
@@ -471,7 +434,20 @@ func leaderAssignTasks(server *rpc.Client) {
 
         phase = shared.TASK_REDUCE
         fmt.Println("Map phase complete. Starting reduce phase.")
+        startReduceTasks(server, files)
+    } else if phase == shared.TASK_REDUCE && reduceDone {
+        fmt.Println("Reduce phase complete. MapReduce job finished.")
+        // Reset TaskAssignments for next job
+        var ok bool
+        err = server.Call("TaskAssignments.Reset", 0, &ok)
+        if err != nil {
+            fmt.Println("Reset error:", err)
+            return
+        }
+
     }
+
+    // Check for free workers and assign idle tasks to them
 
     var workerTasks map[int]shared.Task
     err = server.Call("TaskAssignments.GetWorkerTasks", 0, &workerTasks)
@@ -486,9 +462,7 @@ func leaderAssignTasks(server *rpc.Client) {
         }
 
         currentTask, exists := workerTasks[workerID]
-        workerFree := !exists ||
-            currentTask.Status == shared.TASK_COMPLETE ||
-            currentTask.Status == shared.TASK_IDLE
+        workerFree := !exists || currentTask.Status == shared.TASK_COMPLETE
 
         if !workerFree {
             continue
@@ -526,7 +500,7 @@ func leaderAssignTasks(server *rpc.Client) {
     }
 }
 
-func runAfterY(server *rpc.Client, neighbors [2]int, membership **shared.Membership, id int) {
+func runAfterY(server *rpc.Client, neighbors [2]int, membership **shared.Membership, id int, files []string) {
     //TODO
     // Send membership to neighbors
     if self_node.Alive {
@@ -568,14 +542,14 @@ func runAfterY(server *rpc.Client, neighbors [2]int, membership **shared.Members
                     mu_lmemb.Unlock()
                 }
             }
-            leaderAssignTasks(server)
+            leaderAssignTasks(server, files)
         }
 
         mu_lmemb.Lock()
         printMembership(**membership)
         mu_lmemb.Unlock()
 
-        time.AfterFunc(time.Second*Y_TIME, func() { runAfterY(server, neighbors, membership, id) })
+        time.AfterFunc(time.Second*Y_TIME, func() { runAfterY(server, neighbors, membership, id, files) })
     }
 }
 
