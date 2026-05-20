@@ -41,13 +41,14 @@ On the rest:
 
 go run client.go [node_id] [input_file1] [input_file2] ... up to [input_file8]
 
-with a MAX_NODE count of 8 and max of one input_file per node
+with a MAX_NODE count of 8
 
 Example given running in CSC569lab4 folder:
 
 First terminal:
 
 go run client.go 1 pg-being_ernest/pg-being_ernest_1.txt pg-being_ernest/pg-being_ernest_2.txt pg-being_ernest/pg-being_ernest_3.txt pg-being_ernest/pg-being_ernest_4.txt pg-being_ernest/pg-being_ernest_5.txt pg-being_ernest/pg-being_ernest_6.txt pg-being_ernest/pg-being_ernest_7.txt pg-being_ernest/pg-being_ernest_8.txt
+
 Second terminal:
 
 go run client.go 2 pg-being_ernest/pg-being_ernest_1.txt pg-being_ernest/pg-being_ernest_2.txt pg-being_ernest/pg-being_ernest_3.txt pg-being_ernest/pg-being_ernest_4.txt pg-being_ernest/pg-being_ernest_5.txt pg-being_ernest/pg-being_ernest_6.txt pg-being_ernest/pg-being_ernest_7.txt pg-being_ernest/pg-being_ernest_8.txt
