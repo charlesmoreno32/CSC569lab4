@@ -464,6 +464,25 @@ func mergeOutput(files []string) {
     fmt.Println("Final output written to output/mr-out.txt")
 }
 
+func writeTaskLog(task shared.Task, workerID int) {
+    f, err := os.OpenFile("task-log.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+    if err != nil {
+        fmt.Println("cannot open task log:", err)
+        return
+    }
+    defer f.Close()
+
+    fmt.Fprintf(f, "leader=%d term=%d taskID=%d type=%s file=%s worker=%d status=%s\n",
+        self_node.ID,
+        self_node.Term,
+        task.ID,
+        task.TypeOfTask,
+        task.Filename,
+        workerID,
+        task.Status,
+    )
+}
+
 func leaderAssignTasks(server *rpc.Client, files []string, membership **shared.Membership) {
     if self_node.Role != shared.ROLE_LEADER {
         return
@@ -585,6 +604,8 @@ func leaderAssignTasks(server *rpc.Client, files []string, membership **shared.M
             fmt.Println("AssignTask error:", err)
             continue
         }
+
+        writeTaskLog(idleTask, workerID)
 
         fmt.Printf(
             "Leader assigned %s task %d (%s) to node %d\n",
