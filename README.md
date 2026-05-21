@@ -2,9 +2,6 @@
 
 ## Miriam Brunet, Charles Moreno, Toby Mui
 
-Lab 4
-
-The provided code is a starter code you can ignore and create your own from scratch. Use the membership (heartbeat), leader protocol from previous labs.
 
 1. Master pings each worker periodically – If no response is received within a certain time the worker is marked as failed – Map & reduce task given to this worker are reset back to the initial state and rescheduled for other workers
 
@@ -16,9 +13,6 @@ The provided code is a starter code you can ignore and create your own from scra
 
 3. This is a Map Reduce implementation so: master will create mappers and reducers and they should operate on different chuncks of file . For simplicity, your task is only counting word frequency
 
-It is a simulation. So, as with other labs in this class, give me your readme file so I can run your code
-
-Notes: mrsequential.go depends on some files in an ../mr folder, but since this folder just contains the client /server written using RPC, it is not necessary.
 
 ## Log Replication/Consistency using RAFT
 
