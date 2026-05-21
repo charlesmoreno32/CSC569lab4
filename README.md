@@ -28,7 +28,7 @@ Write the functionality that Raft describes to keep logs consistent (as explaine
 
 <img width="687" height="371" alt="Raft Log Duplication" src="https://github.com/user-attachments/assets/1695bea7-9daa-4966-be39-9680c88385fa" />
 
-Before running do:
+Before running run the following in each node terminal:
 go build -buildmode=plugin wc.go
 
 To run open up [1 + number of nodes] separate terminal instances
@@ -41,16 +41,20 @@ On the rest:
 
 go run client.go [node_id] [input_file1] [input_file2] ... up to [input_file8]
 
-with a MAX_NODE count of 8
+with a MAX_NODE count of 8, expecting 1-8 and node 1 being the default leader
 
 Example given running in CSC569lab4 folder:
 
 First terminal:
 
-go run client.go 1 pg-being_ernest/pg-being_ernest_1.txt pg-being_ernest/pg-being_ernest_2.txt pg-being_ernest/pg-being_ernest_3.txt pg-being_ernest/pg-being_ernest_4.txt pg-being_ernest/pg-being_ernest_5.txt pg-being_ernest/pg-being_ernest_6.txt pg-being_ernest/pg-being_ernest_7.txt pg-being_ernest/pg-being_ernest_8.txt
+go run client.go 8 pg-being_ernest/pg-being_ernest_1.txt pg-being_ernest/pg-being_ernest_2.txt pg-being_ernest/pg-being_ernest_3.txt pg-being_ernest/pg-being_ernest_4.txt pg-being_ernest/pg-being_ernest_5.txt pg-being_ernest/pg-being_ernest_6.txt pg-being_ernest/pg-being_ernest_7.txt pg-being_ernest/pg-being_ernest_8.txt
 
 Second terminal:
 
-go run client.go 2 pg-being_ernest/pg-being_ernest_1.txt pg-being_ernest/pg-being_ernest_2.txt pg-being_ernest/pg-being_ernest_3.txt pg-being_ernest/pg-being_ernest_4.txt pg-being_ernest/pg-being_ernest_5.txt pg-being_ernest/pg-being_ernest_6.txt pg-being_ernest/pg-being_ernest_7.txt pg-being_ernest/pg-being_ernest_8.txt
+go run client.go 7 pg-being_ernest/pg-being_ernest_1.txt pg-being_ernest/pg-being_ernest_2.txt pg-being_ernest/pg-being_ernest_3.txt pg-being_ernest/pg-being_ernest_4.txt pg-being_ernest/pg-being_ernest_5.txt pg-being_ernest/pg-being_ernest_6.txt pg-being_ernest/pg-being_ernest_7.txt pg-being_ernest/pg-being_ernest_8.txt
 
 ...
+
+Original leader terminal:
+
+go run client.go 1 pg-being_ernest/pg-being_ernest_1.txt pg-being_ernest/pg-being_ernest_2.txt pg-being_ernest/pg-being_ernest_3.txt pg-being_ernest/pg-being_ernest_4.txt pg-being_ernest/pg-being_ernest_5.txt pg-being_ernest/pg-being_ernest_6.txt pg-being_ernest/pg-being_ernest_7.txt pg-being_ernest/pg-being_ernest_8.txt
